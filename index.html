@@ -1,0 +1,160 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Puente de Cristal – Simulación 3D</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{margin:0;height:100%;overflow:hidden;background:#10151c;font-family:system-ui,"Segoe UI",Arial,sans-serif;color:#f2f5f8}
+canvas{display:block}
+.p{position:absolute;background:rgba(16,21,28,.74);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.15);border-radius:12px;padding:9px 12px;font-size:13px;line-height:1.4}
+button{font:inherit;color:inherit;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.25);border-radius:8px;padding:7px 12px;cursor:pointer}
+button:hover{background:rgba(255,255,255,.18)}button.on{background:#ffb84d;color:#1b1b1b;border-color:#ffb84d;font-weight:600}
+#t{left:12px;top:calc(env(safe-area-inset-top,0px) + 12px)}#t b{font-size:14px}#t small{opacity:.75;display:block}
+#r{right:12px;top:calc(env(safe-area-inset-top,0px) + 12px);display:flex;flex-direction:column;gap:6px}
+#s{left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 14px);display:flex;gap:8px}
+#h{left:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 14px);font-size:12px;opacity:.85;max-width:240px}
+#a{right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 70px);max-width:300px;font-size:12px;display:none}
+#i{left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;max-width:340px;font-size:14px}#i button{margin-top:8px;background:#ffb84d;color:#1b1b1b;font-weight:600}
+@media(max-width:700px){#h{display:none}#s button{padding:7px 8px;font-size:12px}}
+</style></head><body>
+<div id="t" class="p"><b>Puente de Cristal · Bulevar de Chipre</b><small>Escenario: <span id="sn">Día soleado</span> · Vista: <span id="vn">exterior</span></small></div>
+<div id="r" class="p"><button id="b1">▶ Iniciar recorrido</button><button id="b2">↺ Reiniciar posición</button><button id="b3">Vista exterior</button><button id="b4">Vista general</button><button id="b5">Supuestos</button></div>
+<div id="a" class="p"><b>Valores estimados (lámina: ±tolerancia)</b><br>Radio 40,1 m, 80°, 56 m, 24 vanos de 2,33 m, ancho 2,9 m, cubierta 2,80/3,60 m: de la lámina.<br>Estimado: ancho de cercha en detalle, altura de muros (2,80 m), nudos de la cercha, terreno y árboles. Pendiente: radial exacto de los rieles de spots A/B, color fijo de cada reflector y qué es una luminaria carriel. La lámina dice cubierta monopendiente; se usa V invertida por su indicación.</div>
+<div id="s" class="p"><button data-k="0" class="on">☀ Día soleado</button><button data-k="1">☁ Día nublado</button><button data-k="2">☾ Noche</button></div>
+<div id="h" class="p">W A S D mover · Shift correr · Mouse mirar · ESC liberar cursor<br>Vista exterior: arrastrar para orbitar, rueda para acercar</div>
+<div id="i" class="p" style="display:none"><b>Recorrido en primera persona</b><br>Haz clic para capturar el mouse y caminar por el puente.<br><button id="go">Entrar</button></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const R=40.1,L=56,A=L/R,T0=-A/2,T1=A/2,N=24,DT=A/N,DECK=10,HW=1.45,WH=2.8,RH=3.6,TOP=DECK-.2;
+const P=(r,t,y)=>new THREE.Vector3(r*Math.sin(t),y,-r*Math.cos(t));
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),sm=x=>{x=clamp(x,0,1);return x*x*(3-2*x)};
+const terr=(x,z)=>{const t=Math.abs(Math.atan2(x,-z)),r=Math.abs(Math.hypot(x,z)-R);let h=10*sm((t-.36)/.34);h=Math.max(h,10*sm((r-20)/22));return h+.5*Math.sin(x*.12)*Math.sin(z*.15)*(1-h/10)};
+const dep=s=>s<15?.9+1.3*Math.pow(s/15,1.6):s<38?2.2-1.35*Math.sin(Math.PI*(s-15)/23):.9+1.3*Math.pow((56-s)/18,1.6);
+const ren=new THREE.WebGLRenderer({antialias:true});ren.setPixelRatio(Math.min(devicePixelRatio,2));ren.setSize(innerWidth,innerHeight);
+ren.shadowMap.enabled=true;ren.shadowMap.type=THREE.PCFSoftShadowMap;ren.toneMapping=THREE.ACESFilmicToneMapping;ren.outputEncoding=THREE.sRGBEncoding;
+document.body.prepend(ren.domElement);
+const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,.1,1200);
+const hemi=new THREE.HemisphereLight(0xffffff,0x6a8a4a,1),sun=new THREE.DirectionalLight(0xfff2dc,3);
+sun.position.set(40,80,10);sun.target.position.set(0,5,-35);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
+Object.assign(sun.shadow.camera,{left:-50,right:50,top:50,bottom:-50,near:1,far:220});sun.shadow.bias=-.0005;
+scene.add(hemi,sun,sun.target);
+const gl=(c,o,e)=>new THREE.MeshStandardMaterial({color:c,transparent:true,opacity:o,roughness:.05,metalness:.1,emissive:e?c:0,emissiveIntensity:0,side:THREE.DoubleSide,depthWrite:false});
+const M={c:gl(0xffffff,.14),p:gl(0xff2e9a,.62,1),y:gl(0xffe629,.62,1),b:gl(0x1f5bff,.72,1),g:gl(0x39d63a,.72,1)};
+const white=new THREE.MeshStandardMaterial({color:0xf4f4f4,roughness:.5,metalness:.1}),dark=new THREE.MeshStandardMaterial({color:0x111111});
+const em=c=>new THREE.MeshStandardMaterial({color:0x222222,emissive:c,emissiveIntensity:0});
+const glowM=new THREE.MeshBasicMaterial({color:0xffb060,transparent:true,opacity:0,blending:THREE.AdditiveBlending,depthWrite:false}),glowG=[];
+const ledW=em(0xffb870),stB=em(0x00b4ff),stG=em(0x2dff7a),lens=em(0xfff0d0),rfM=em(0x20a0ff);
+const add=(m,sh=true)=>{m.castShadow=sh;m.receiveShadow=true;scene.add(m);return m};
+function sector(r0,r1,t0,t1,y,h,mat,sh){const s=new THREE.Shape(),k=8;
+ for(let i=0;i<=k;i++){const t=t0+(t1-t0)*i/k;s[i?'lineTo':'moveTo'](r1*Math.sin(t),r1*Math.cos(t))}
+ for(let i=k;i>=0;i--){const t=t0+(t1-t0)*i/k;s.lineTo(r0*Math.sin(t),r0*Math.cos(t))}
+ const g=new THREE.ExtrudeGeometry(s,{depth:h,bevelEnabled:false});g.rotateX(-Math.PI/2);const m=add(new THREE.Mesh(g,mat),sh);m.position.y=y;return m}
+class Arc extends THREE.Curve{constructor(r,y){super();this.r=r;this.y=y}getPoint(u,o=new THREE.Vector3()){return o.copy(P(this.r,T0+A*u,this.y))}}
+const tube=(r,y,rad,mat)=>add(new THREE.Mesh(new THREE.TubeGeometry(new Arc(r,y),96,rad,6),mat));
+function bar(a,b,rad,mat){const d=b.clone().sub(a),l=d.length();if(l<.05)return;
+ const m=add(new THREE.Mesh(new THREE.CylinderGeometry(rad,rad,l,6),mat));m.position.copy(a).addScaledVector(d,.5);m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),d.normalize())}
+const quad=(v,mat,grp)=>{const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(v.flatMap(p=>[p.x,p.y,p.z]),3));g.setIndex([0,1,2,0,2,3]);g.computeVertexNormals();const m=new THREE.Mesh(g,mat);m.renderOrder=2;(grp||scene).add(m)};
+// glass floor
+for(let i=0;i<N*2;i++)for(let j=0;j<2;j++){const t=T0+i*DT/2,r0=R-HW+j*HW+.02;sector(r0,r0+HW-.04,t+.003,t+DT/2-.003,DECK-.05,.05,M.c,false)}
+// truss (cota 10 m deck→base, depth .9–2.2 m)
+[-1,1].forEach(s=>{const r=R+s*(HW-.1),pts=[];
+ for(let i=0;i<=N;i++)pts.push(P(r,T0+i*DT,TOP-dep(i*L/N)));
+ add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),96,.07,6),white));tube(r,TOP,.07,white);
+ for(let i=0;i<=N;i++){const T=P(r,T0+i*DT,TOP),B=pts[i];bar(T,B,.04,white);
+  if(i<N){if(i%2)bar(B,P(r,T0+(i+1)*DT,TOP),.035,white);else bar(T,pts[i+1],.035,white)}}});
+for(let i=0;i<=N;i++)bar(P(R-HW+.1,T0+i*DT,TOP),P(R+HW-.1,T0+i*DT,TOP),.05,white);
+[15,38].forEach(s=>{const t=T0+s/R;[-1,1].forEach(k=>{const r=R+k*(HW-.1),top=P(r,t,TOP-dep(s)),g=terr(top.x,top.z);
+ const c=add(new THREE.Mesh(new THREE.CylinderGeometry(.14,.14,top.y-g,10),white));c.position.set(top.x,(top.y+g)/2,top.z);
+ const b=add(new THREE.Mesh(new THREE.BoxGeometry(.6,.25,.6),white));b.position.set(top.x,g,top.z)})});
+// lateral walls: 1 panel per bay, AZUL-T-T-T-VERDE-T-T-T ; posts; zócalo LED
+const rfn=[];
+for(let i=0;i<N*2;i++)[-1,1].forEach(s=>{const t=T0+i*DT/2,r=R+s*(HW-.03),k=i%8==0?'b':i%8==4?'g':'c',hh=k=='c'?1.0:1.3;
+ sector(r-.012,r+.012,t+.0005,t+DT/2-.0005,DECK+.12,hh-.02,M[k],false);
+ if(k!='c')sector(r-.03,r+.03,t+.01,t+DT/2-.01,DECK+.12,.05,k=='b'?stB:stG,false)});
+for(let i=0;i<=N;i++)[-1,1].forEach(s=>bar(P(R+s*HW,T0+i*DT,DECK),P(R+s*HW,T0+i*DT,DECK+WH),.055,white));
+[-1,1].forEach(s=>{tube(R+s*(HW-.06),DECK+.07,.05,ledW);{const g=new THREE.Mesh(new THREE.TubeGeometry(new Arc(R+s*(HW-.06),DECK+.1),96,.13,8),glowM);glowG.push(g);scene.add(g)}tube(R+s*(HW-.03),DECK+.1,.04,white);tube(R+s*(HW-.03),DECK+1.12,.04,white)});
+// V-inverted roof: eaves 2.80 m, ridge 3.60 m; seq ROSA ROSA T T AMA AMA T T on both slopes
+const seq=['p','p','c','c','y','y','c','c'],patch=new THREE.Group();scene.add(patch);
+const pm={p:new THREE.MeshBasicMaterial({color:0xff2e9a,transparent:true,opacity:.28,depthWrite:false}),y:new THREE.MeshBasicMaterial({color:0xffe629,transparent:true,opacity:.28,depthWrite:false})};
+[-1,1].forEach(s=>tube(R+s*HW,DECK+WH,.045,white));tube(R,DECK+RH,.05,white);
+for(let i=0;i<=N;i++){const t=T0+i*DT;[-1,1].forEach(s=>bar(P(R+s*HW,t,DECK+WH),P(R,t,DECK+RH),.04,white));
+ if(i<N){const k=seq[i%8],t2=t+DT;[-1,1].forEach(s=>{quad([P(R+s*HW,t,DECK+WH),P(R,t,DECK+RH),P(R,t2,DECK+RH),P(R+s*HW,t2,DECK+WH)],M[k]);
+  if(k!='c')quad([P(R+s*HW,t+.1*DT,DECK+.03),P(R,t+.1*DT,DECK+.03),P(R,t2+.1*DT,DECK+.03),P(R+s*HW,t2+.1*DT,DECK+.03)],pm[k],patch)})}}
+// end terraces (hip roof)
+[[T0,-1],[T1,1]].forEach(([t,s])=>{const e=P(R,t,0),c=e.clone().add(new THREE.Vector3(Math.cos(t),0,Math.sin(t)).multiplyScalar(s*3.6)),g=new THREE.Group();g.position.set(c.x,0,c.z);g.rotation.y=Math.atan2(Math.cos(t),Math.sin(t));scene.add(g);
+ [[-2.2,-2.2],[2.2,-2.2],[2.2,2.2],[-2.2,2.2]].forEach(([x,z])=>{const p=add(new THREE.Mesh(new THREE.CylinderGeometry(.06,.06,3,8),white));p.position.set(x,DECK+1.5,z);g.add(p)});
+ const ro=new THREE.Mesh(new THREE.ConeGeometry(3.6,1.2,4),M.c);ro.rotation.y=Math.PI/4;ro.position.y=DECK+3.6;g.add(ro)});
+// DOCUMENTED LIGHTING ONLY
+const warm=[],spots=[],refl=[];
+for(let k=0;k<6;k++){const l=new THREE.PointLight(0xffb870,0,13,1.5);l.position.copy(P(R,T0+(5+9*k)/R,DECK+.5));scene.add(l);warm.push(l)}
+[[.3,.9],[55.7,.9],[18.67,.35],[37.33,.35]].forEach(([s,o])=>{const t=T0+s/R,pos=P(R+o,t,DECK+RH-.35);
+ const f=add(new THREE.Mesh(new THREE.CylinderGeometry(.07,.09,.28,10),dark));f.position.copy(pos);
+ const le=new THREE.Mesh(new THREE.CircleGeometry(.06,10),lens);le.rotation.x=Math.PI/2;le.position.copy(pos).y-=.15;scene.add(le);
+ const sp=new THREE.SpotLight(0xfff0d0,0,18,.45,.6,1.2);sp.position.copy(pos);sp.target.position.copy(P(R+HW,t+.01,DECK+1.2));scene.add(sp,sp.target);spots.push(sp)});
+[15,38].forEach((s,k)=>{const t=T0+s/R,pos=P(R+1.7,t,TOP-dep(s)-.9),b=add(new THREE.Mesh(new THREE.BoxGeometry(.5,.35,.08),rfM),false);b.position.copy(pos);b.lookAt(P(R+HW,t,DECK));
+ const sp=new THREE.SpotLight(0x20a0ff,0,26,.95,.7,1.2);sp.position.copy(pos);sp.target.position.copy(P(R+HW,t,DECK+.5));scene.add(sp,sp.target);refl.push(sp)});
+// terrain: plaza (h=10) + vegetated bowl
+const tg=new THREE.PlaneGeometry(320,320,160,160);tg.rotateX(-Math.PI/2);const pos=tg.attributes.position,col=[];
+for(let i=0;i<pos.count;i++){const x=pos.getX(i),z=pos.getZ(i)-40;pos.setZ(i,z);const h=terr(x,z),r=Math.abs(Math.hypot(x,z)-R);pos.setY(i,h);
+ if(h>9.6&&r<24)col.push(.62,.32,.27);else{const n=.5+.5*Math.sin(x*.3)*Math.cos(z*.27);col.push(.14+.08*n,.34+.2*n,.1+.05*n)}}
+tg.setAttribute('color',new THREE.Float32BufferAttribute(col,3));tg.computeVertexNormals();
+const tm=new THREE.Mesh(tg,new THREE.MeshStandardMaterial({vertexColors:true,roughness:1}));tm.receiveShadow=true;scene.add(tm);
+const nT=130,trunk=new THREE.InstancedMesh(new THREE.CylinderGeometry(.2,.3,1,6),new THREE.MeshStandardMaterial({color:0x4a3524}),nT),crown=new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1,0),new THREE.MeshStandardMaterial({color:0xffffff,roughness:1}),nT),d=new THREE.Object3D();
+let n=0;while(n<nT){const x=(Math.random()-.5)*220,z=-40+(Math.random()-.5)*220,r=Math.abs(Math.hypot(x,z)-R),y=terr(x,z);
+ if(r<6&&Math.abs(Math.atan2(x,-z))<A/2+.4)continue;if(y>9.6&&r<26)continue;
+ const h=5+Math.random()*7;d.rotation.set(0,0,0);d.position.set(x,y+h*.25,z);d.scale.set(1,h*.5,1);d.updateMatrix();trunk.setMatrixAt(n,d.matrix);
+ d.position.set(x,y+h*.75,z);d.scale.set(h*.32,h*.3,h*.32);d.updateMatrix();crown.setMatrixAt(n,d.matrix);crown.setColorAt(n,new THREE.Color().setHSL(.25+Math.random()*.08,.5,.2+Math.random()*.12));n++}
+trunk.castShadow=crown.castShadow=true;scene.add(trunk,crown);
+const mtm=new THREE.MeshStandardMaterial({color:0x5f84a8,roughness:1,fog:false});
+for(let i=0;i<18;i++){const a=(i/18)*Math.PI*2,h=50+Math.random()*50,m=new THREE.Mesh(new THREE.ConeGeometry(70+Math.random()*50,h,6),mtm);m.position.set(Math.sin(a)*420,h/2-10,-40-Math.cos(a)*420);scene.add(m)}
+const sunDisc=new THREE.Mesh(new THREE.SphereGeometry(14,16,12),new THREE.MeshBasicMaterial({color:0xfff3c0,fog:false}));sunDisc.position.copy(sun.position).normalize().multiplyScalar(500);scene.add(sunDisc);
+const pts=(n,f,c,s)=>{const a=[];for(let i=0;i<n;i++)a.push(...f());const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(a,3));const p=new THREE.Points(g,new THREE.PointsMaterial({color:c,size:s,sizeAttenuation:false,fog:false}));scene.add(p);return p};
+const stars=pts(300,()=>{const a=Math.random()*6.28,e=.15+Math.random()*1.3;return[Math.cos(a)*Math.cos(e)*600,Math.sin(e)*600,-40+Math.sin(a)*Math.cos(e)*600]},0xffffff,1.6);
+const city=pts(700,()=>{const a=-.9+Math.random()*1.8;return[Math.sin(a)*330,6+Math.random()*28,-40-Math.cos(a)*330]},0xffc070,2);
+// scenarios: z=zócalo LED, st=RGB strips, rf=reflectors, sp=track spots (sensor logic: sunny off, cloudy partial, night all)
+const S=[{n:'Día soleado',bg:0x87c4f0,f:[90,520],hs:0xffffff,hg:0x6a8a4a,hi:.9,sun:3,sc:0xfff2dc,ex:1.05,z:0,st:0,rf:0,sp:0,ge:0,mt:0x5f84a8},
+{n:'Día nublado',bg:0x9aa5ae,f:[50,400],hs:0xd5dde4,hg:0x56684a,hi:1.1,sun:.5,sc:0xdfe6ee,ex:.9,z:1,st:1.2,rf:.3,sp:0,ge:.35,mt:0x6c7884},
+{n:'Noche',bg:0x040815,f:[30,330],hs:0x2a3a66,hg:0x0a120a,hi:.35,sun:.22,sc:0x8fa8ff,ex:1.15,z:2.2,st:2.4,rf:1,sp:1,ge:.9,mt:0x0b1222}];
+let cur=S[0];
+function setS(k){const s=cur=S[k];scene.background=new THREE.Color(s.bg);scene.fog=new THREE.Fog(s.bg,...s.f);
+ hemi.color.set(s.hs);hemi.groundColor.set(s.hg);hemi.intensity=s.hi;sun.intensity=s.sun;sun.color.set(s.sc);sun.castShadow=k==0;ren.toneMappingExposure=s.ex;
+ ledW.emissiveIntensity=s.z*2;glowM.opacity=Math.min(.7,s.z*.3);glowG.forEach(g=>g.visible=s.z>0);stB.emissiveIntensity=stG.emissiveIntensity=s.st;lens.emissiveIntensity=s.sp*2;rfM.emissiveIntensity=s.rf*1.5;
+ warm.forEach(l=>l.intensity=s.z*1.8);spots.forEach(l=>l.intensity=s.sp*7);refl.forEach(l=>l.intensity=s.rf*16);
+ M.b.emissiveIntensity=M.g.emissiveIntensity=s.ge;M.p.emissiveIntensity=M.y.emissiveIntensity=s.sp*.08;
+ patch.visible=sunDisc.visible=k==0;stars.visible=city.visible=k==2;mtm.color.set(s.mt);
+ [...document.querySelectorAll('#s button')].forEach((b,i)=>b.classList.toggle('on',i==k));$('sn').textContent=s.n}
+document.querySelectorAll('#s button').forEach(b=>b.onclick=()=>setS(+b.dataset.k));
+let mode='orbit';const orb={az:.35,el:.32,d:85},tgt=new THREE.Vector3(0,9,-36);
+const eA=P(R,T0,0),tA={x:Math.cos(T0),z:Math.sin(T0)};
+const fp={x:eA.x-tA.x*8,z:eA.z-tA.z*8,y:DECK+1.65,yaw:Math.atan2(-tA.x,-tA.z),pit:-.03};
+const keys={};let drag=false;
+const deck=(x,z)=>Math.abs(Math.hypot(x,z)-R)<=HW&&Math.abs(Math.atan2(x,-z))<=T1;
+function setMode(m){mode=m;$('vn').textContent=m=='fp'?'primera persona':'exterior';$('b3').textContent=m=='fp'?'Vista exterior':'Primera persona';$('i').style.display=m=='fp'&&!document.pointerLockElement?'block':'none'}
+function reset(){Object.assign(fp,{x:eA.x-tA.x*8,z:eA.z-tA.z*8,y:DECK+1.65,yaw:Math.atan2(-tA.x,-tA.z),pit:-.03});setMode('fp')}
+function lock(){setMode('fp');ren.domElement.requestPointerLock&&ren.domElement.requestPointerLock()}
+$('b1').onclick=lock;$('go').onclick=lock;$('b2').onclick=reset;$('b3').onclick=()=>setMode(mode=='fp'?'orbit':'fp');
+$('b4').onclick=()=>{Object.assign(orb,{az:.35,el:.32,d:85});setMode('orbit')};
+$('b5').onclick=()=>{const a=$('a');a.style.display=a.style.display=='block'?'none':'block'};
+document.addEventListener('pointerlockchange',()=>{$('i').style.display=mode=='fp'&&!document.pointerLockElement?'block':'none'});
+addEventListener('keydown',e=>keys[e.code]=true);addEventListener('keyup',e=>keys[e.code]=false);
+ren.domElement.addEventListener('mousedown',()=>drag=true);addEventListener('mouseup',()=>drag=false);
+addEventListener('mousemove',e=>{const lk=!!document.pointerLockElement;if(mode=='fp'&&(lk||drag)){fp.yaw-=e.movementX*.0022;fp.pit=clamp(fp.pit-e.movementY*.0022,-1.4,1.4)}
+ else if(mode=='orbit'&&drag){orb.az-=e.movementX*.006;orb.el=clamp(orb.el+e.movementY*.005,.02,1.45)}});
+ren.domElement.addEventListener('wheel',e=>{orb.d=clamp(orb.d*(1+Math.sign(e.deltaY)*.08),8,260)},{passive:true});
+addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();ren.setSize(innerWidth,innerHeight)});
+const clock=new THREE.Clock();
+function loop(){requestAnimationFrame(loop);const dt=Math.min(clock.getDelta(),.05),tt=clock.elapsedTime;
+ refl.forEach((l,k)=>{const h=.49+.11*Math.sin(tt*.5+k*2.2);l.color.setHSL(h,1,.5);rfM.emissive.setHSL(h,1,.5)});
+ if(mode=='fp'){const f=(keys.KeyW||keys.ArrowUp?1:0)-(keys.KeyS||keys.ArrowDown?1:0),r=(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0),sp=(keys.ShiftLeft?9:4)*dt;
+  const dx=(-Math.sin(fp.yaw)*f+Math.cos(fp.yaw)*r)*sp,dz=(-Math.cos(fp.yaw)*f-Math.sin(fp.yaw)*r)*sp;
+  if(dx||dz){let nx=fp.x+dx,nz=fp.z+dz;const was=deck(fp.x,fp.z);
+   if(was&&Math.abs(Math.atan2(nx,-nz))<T1+.02){const r0=Math.hypot(nx,nz),rc=clamp(r0,R-HW+.25,R+HW-.25);nx*=rc/r0;nz*=rc/r0}
+   else if(!was&&deck(nx,nz)&&Math.abs(Math.atan2(nx,-nz))<T1-.03){nx=fp.x;nz=fp.z}
+   if(Math.hypot(nx,nz+40)<125){fp.x=nx;fp.z=nz}}
+  const gy=(deck(fp.x,fp.z)?DECK:terr(fp.x,fp.z))+1.65;fp.y+=(gy-fp.y)*Math.min(1,dt*8);
+  cam.position.set(fp.x,fp.y,fp.z);cam.rotation.set(fp.pit,fp.yaw,0,'YXZ')}
+ else{cam.position.set(tgt.x+orb.d*Math.cos(orb.el)*Math.sin(orb.az),tgt.y+orb.d*Math.sin(orb.el),tgt.z+orb.d*Math.cos(orb.el)*Math.cos(orb.az));cam.lookAt(tgt)}
+ ren.render(scene,cam)}
+setS(0);setMode('orbit');loop();
+</script></body></html>
